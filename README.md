@@ -9,7 +9,7 @@ This is the backend API service for the 589 FRC Crescendo Scouting App. It provi
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18.18.0+
+- Node.js 20.0.0+ (required for Supabase compatibility)
 - Supabase account with PostgreSQL database
 - Git
 
@@ -195,9 +195,10 @@ npm start
 
 ## Educational Resources
 
-- **REST_API_EDUCATION.md** - Learn REST API design principles
-- **SUPABASE_MIGRATION.md** - Understanding the Supabase migration
-- **README-original.md** - Full project context and architecture
+- **docs/REST_API_EDUCATION.md** - Learn REST API design principles
+- **docs/SUPABASE_MIGRATION.md** - Understanding the Supabase migration
+- **docs/README-original.md** - Full project context and architecture
+- **docs/SETUP_GUIDE.md** - Detailed setup instructions
 
 ## Technology Stack
 
