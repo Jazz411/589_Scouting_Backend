@@ -163,16 +163,16 @@ Once VS Code is open:
 ```bash
 # Open Command Prompt or PowerShell
 # Create a folder for your coding projects (if it doesn't exist)
-mkdir C:\Users\YourUsername\Projects
-cd C:\Users\YourUsername\Projects
+mkdir C:\Users\YourUsername\Projects\589
+cd C:\Users\YourUsername\Projects\589
 ```
 
 **For Mac:**
 ```bash
 # Open Terminal
 # Create a folder for your coding projects (if it doesn't exist)
-mkdir ~/Projects
-cd ~/Projects
+mkdir ~/Projects/589
+cd ~/Projects/589
 ```
 
 ### 3.2 Clone the Repository from GitHub
@@ -180,20 +180,20 @@ cd ~/Projects
 **Team 589 Scouting Backend Repository:**
 
 ```bash
-# Clone the repository (replace with the actual repository URL)
-git clone https://github.com/589-robotics/589_Scouting_Backend.git
+# Clone the repository (this is a public github project and should be accessible)
+git clone https://github.com/Jazz411/589_Scouting_Backend.git
 
 # Navigate into the project folder
 cd 589_Scouting_Backend
 ```
 
-> **Note:** If you don't have the repository URL yet, ask your team lead for access to the GitHub repository.
-
 ### 3.3 Open the Project in VS Code
 
 **From Command Line/Terminal:**
 ```bash
-# Make sure you're in the project directory
+# Make sure you're in the 589_Scouting_Backend project directory
+# Windows: cd C:\Users\YourUsername\Projects\589\589_Scouting_Backend
+# Mac: cd ~/Projects/589/589_Scouting_Backend
 code .
 ```
 
@@ -219,20 +219,8 @@ Our project uses **Supabase** as the database backend. Supabase is a cloud-hoste
 ### 4.2 Get Your Supabase Service Role Key
 
 You need a **service role key** to connect to the database:
-
-1. **Open the Supabase Dashboard:**
-   - Visit: https://supabase.com/dashboard/project/felzvdhnugvnuvqtzwkt/settings/api
-   - (You may need to sign in - ask your team lead for credentials if you don't have access)
-
-2. **Find the Service Role Key:**
-   - Scroll down to the "Project API keys" section
-   - Look for the **service_role** key
-   - It's a long string starting with `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
-   - Click the "Copy" button to copy it
-
-   ⚠️ **Important:**
-   - Use the **service_role** key, NOT the `anon` key
-   - The service_role key has full database access - keep it secret!
+-  See your team lead to get an email with the **service role key**
+-  Keep this email handy for the next step.
 
 ### 4.3 Create Your Environment Configuration File
 
@@ -267,32 +255,46 @@ The project needs environment variables to connect to Supabase. These are stored
 
 4. **Open the `.env` file and update it:**
 
-   Find this line:
+   A. Find this line:
    ```
-   SUPABASE_SECRET_KEY=YOUR_SERVICE_ROLE_KEY_HERE
+   SUPABASE_SECRET_KEY=your_service_role_secret_key_here
    ```
 
-   Replace `YOUR_SERVICE_ROLE_KEY_HERE` with the service role key you copied from Supabase.
+   Replace `your_service_role_secret_key_here` with the Supabase service role key from your email.
+
+   B. Find this line:
+   ```
+   API_KEYS=your_589_api_secret_key_here
+   ```
+
+   Replace `your_589_api_secret_key_here` with the 589 API key from your email.
+
+   C. Find this line:
+   ```
+   TBA_API_KEY=your_tba_api_key_here
+   ```
+
+   Replace `your_tba_api_key_here` with the TBA API key from your email.
 
 5. **Your `.env` file should look like this:**
 
    ```env
    # Supabase Configuration
    SUPABASE_URL=https://felzvdhnugvnuvqtzwkt.supabase.co
-   SUPABASE_SECRET_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlbHp2ZGhudWd2bnV2cXR6d2t0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTYzOTQxMTIwMCwiZXhwIjoxOTU0OTg3MjAwfQ.your_actual_key_here
+   SUPABASE_SECRET_KEY=sb_secret_[many_random_letters_and_numbers]
 
    # Server Configuration
    PORT=3000
    NODE_ENV=development
 
    # API Security
-   API_KEYS=dev-key-123,team-589-key
+   API_KEYS=589_[many_random_letters_and_numbers]
 
    # CORS
    ALLOWED_ORIGINS=http://localhost:3000,http://localhost:19006,http://localhost:8081
 
    # The Blue Alliance API (optional)
-   TBA_API_KEY=your_tba_api_key_here
+   TBA_API_KEY=o4m[many_more_random_letters_and_numbers]
    ```
 
 6. **Save the file** (`Ctrl+S` on Windows, `Cmd+S` on Mac)
@@ -523,7 +525,6 @@ You now have the 589 Scouting Backend running on your laptop! Here's what you ac
    - **Main README:** `../README.md` - API overview and endpoints
    - **REST API Guide:** `REST_API_EDUCATION.md` - Learn REST principles
    - **Supabase Migration:** `SUPABASE_MIGRATION.md` - Database architecture
-   - **Original Context:** `README-original.md` - Full project background
 
 3. **Test the API Endpoints:**
    - Open http://localhost:3000/api-docs
@@ -540,7 +541,7 @@ You now have the 589 Scouting Backend running on your laptop! Here's what you ac
 
 ### Use Claude Code
 
-1. **Open Claude Code** (click the Claude icon in the left sidebar, or press `Ctrl+L` / `Cmd+L`)
+1. **Open Claude Code** (type `Ctrl+'` / `Cmd+'` to open a terminal in VS Code and type 'claude' at the prompt)
 2. **Ask questions** about the codebase:
    - "Explain how the teams API endpoint works"
    - "How does authentication work in this API?"
@@ -672,7 +673,7 @@ Claude Code is built into VS Code and can help you:
 - Learn new concepts
 - Write and modify code
 
-Just open Claude Code (`Ctrl+L` / `Cmd+L`) and ask your question!
+Type `Ctrl+'` / `Cmd+'` to open a terminal in VS Code, type 'claude' at the prompt and ask your question!
 
 ---
 
