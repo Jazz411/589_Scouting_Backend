@@ -19,12 +19,12 @@ const matchesRoutes = require('./routes/matches');
 const robotInfoRoutes = require('./routes/robotInfo');
 const dashboardRoutes = require('./routes/dashboard');
 const tbaRoutes = require('./routes/tba');
+// const seasonsRoutes = require('./routes/seasons'); // Table not yet created in database
 // const { router: statisticsRoutes } = require('./routes/statistics');
-// const seasonsRoutes = require('./routes/seasons');
 
 // Import middleware
 const { errorHandler, notFound } = require('./middleware/errorHandling');
-const { validateApiKey } = require('./middleware/auth');
+const { validateApiKey, validateApiKeyForWrites } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,6 +69,23 @@ app.use(cors({
 
 // Logging middleware
 app.use(morgan('combined'));
+
+// Custom activity logger middleware (log API requests to dashboard)
+app.use((req, res, next) => {
+    // Skip logging for static files and health checks
+    if (req.path.startsWith('/api/') && req.path !== '/api/dashboard/activity') {
+        const logMessage = `${req.method} ${req.path}`;
+        // We'll add this to dashboard logs after routes are loaded
+        if (dashboardRoutes.addLog) {
+            dashboardRoutes.addLog('request', logMessage, {
+                method: req.method,
+                path: req.path,
+                ip: req.ip || req.connection.remoteAddress
+            });
+        }
+    }
+    next();
+});
 
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
@@ -176,13 +193,19 @@ app.get('/api/info', (req, res) => {
 });
 
 // API Routes with validation middleware
-app.use('/api/teams', validateApiKey, teamsRoutes);
-app.use('/api/matches', validateApiKey, matchesRoutes);
-app.use('/api/robot-info', validateApiKey, robotInfoRoutes);
-app.use('/api/dashboard', validateApiKey, dashboardRoutes);
-app.use('/api/tba', validateApiKey, tbaRoutes);
-// app.use('/api/statistics', validateApiKey, statisticsRoutes);
-// app.use('/api/seasons', validateApiKey, seasonsRoutes);
+// Read operations (GET) are public, write operations (POST/PUT/DELETE) require API key
+app.use('/api/teams', validateApiKeyForWrites, teamsRoutes);
+app.use('/api/matches', validateApiKeyForWrites, matchesRoutes);
+app.use('/api/robot-info', validateApiKeyForWrites, robotInfoRoutes);
+app.use('/api/dashboard', validateApiKeyForWrites, dashboardRoutes);
+app.use('/api/tba', validateApiKeyForWrites, tbaRoutes);
+// app.use('/api/seasons', validateApiKeyForWrites, seasonsRoutes); // Table not yet created
+// app.use('/api/statistics', validateApiKeyForWrites, statisticsRoutes);
+
+// Set up TBA logger (after dashboard route is loaded)
+if (tbaRoutes.setLogger && dashboardRoutes.addLog) {
+    tbaRoutes.setLogger(dashboardRoutes.addLog);
+}
 
 // ============================================================================
 // ERROR HANDLING

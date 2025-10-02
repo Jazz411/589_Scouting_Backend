@@ -5,13 +5,46 @@
 
 // Configuration
 const API_BASE = window.location.origin;
-const API_KEY = 'dev-key-123';
+// API key removed - read operations are now public, write operations require authentication
 
 // Global state
 let currentSeason = null;
 let currentRegional = null;
 let teams = [];
 let regionals = [];
+
+// Dark Mode Functions
+function toggleDarkMode() {
+    const html = document.documentElement;
+    const currentTheme = html.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+    html.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+
+    // Update button icon
+    const toggleBtn = document.getElementById('darkModeToggle');
+    if (newTheme === 'dark') {
+        toggleBtn.innerHTML = '<i class="fas fa-sun"></i>';
+    } else {
+        toggleBtn.innerHTML = '<i class="fas fa-moon"></i>';
+    }
+}
+
+// Initialize dark mode from localStorage
+function initDarkMode() {
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+
+    document.documentElement.setAttribute('data-theme', theme);
+
+    // Update button icon
+    const toggleBtn = document.getElementById('darkModeToggle');
+    if (toggleBtn) {
+        toggleBtn.innerHTML = theme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+    }
+}
 
 // Utility Functions
 function showToast(type, message) {
@@ -33,18 +66,55 @@ function showLoading(elementId) {
     `;
 }
 
+// Store API key for dashboard operations
+let dashboardApiKey = null;
+
+/**
+ * Get API key for dashboard write operations
+ */
+async function getDashboardApiKey() {
+    if (dashboardApiKey) {
+        return dashboardApiKey;
+    }
+
+    try {
+        const response = await fetch(API_BASE + '/api/dashboard/api-key');
+        if (response.ok) {
+            const data = await response.json();
+            dashboardApiKey = data.data.apiKey;
+            return dashboardApiKey;
+        }
+    } catch (error) {
+        console.error('Failed to get API key:', error);
+    }
+    return null;
+}
+
 async function makeRequest(url, options = {}) {
     const defaultOptions = {
         headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': API_KEY
+            'Content-Type': 'application/json'
         }
     };
 
+    // Add API key for POST/PUT/DELETE requests
+    if (options.method && options.method !== 'GET') {
+        const apiKey = await getDashboardApiKey();
+        console.log('API Key retrieved:', apiKey ? 'Yes' : 'No');
+        if (apiKey) {
+            defaultOptions.headers['x-api-key'] = apiKey;
+        }
+    }
+
     const mergedOptions = { ...defaultOptions, ...options };
+    if (mergedOptions.headers) {
+        mergedOptions.headers = { ...defaultOptions.headers, ...options.headers };
+    }
     if (mergedOptions.body && typeof mergedOptions.body === 'object') {
         mergedOptions.body = JSON.stringify(mergedOptions.body);
     }
+
+    console.log('Request headers:', mergedOptions.headers);
 
     try {
         const response = await fetch(API_BASE + url, mergedOptions);
@@ -82,11 +152,11 @@ async function initDashboard() {
         document.getElementById('dbStatus').innerHTML = '<i class="fas fa-check-circle text-success me-1"></i>Connected';
         document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
 
+        // Check TBA API status
+        checkTBAStatus();
+
         // Load overview statistics
         await loadOverviewStats();
-
-        // Load initial data
-        await loadSeasons();
 
     } catch (error) {
         console.error('Dashboard initialization failed:', error);
@@ -94,6 +164,22 @@ async function initDashboard() {
             '<i class="fas fa-times-circle text-danger me-1"></i>Error';
         document.getElementById('connectionStatus').className = 'badge bg-danger';
         showToast('error', 'Failed to connect to API: ' + error.message);
+    }
+}
+
+async function checkTBAStatus() {
+    try {
+        // Try to get TBA status by making a simple request
+        const response = await makeRequest('/api/tba/status');
+
+        if (response.success) {
+            document.getElementById('tbaStatus').innerHTML = '<i class="fas fa-check-circle text-success me-1"></i>Connected';
+        } else {
+            document.getElementById('tbaStatus').innerHTML = '<i class="fas fa-exclamation-triangle text-warning me-1"></i>Limited';
+        }
+    } catch (error) {
+        console.error('TBA API check failed:', error);
+        document.getElementById('tbaStatus').innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i>Offline';
     }
 }
 
@@ -105,7 +191,6 @@ async function loadOverviewStats() {
 
         document.getElementById('totalTeams').textContent = stats.totalTeams;
         document.getElementById('totalMatches').textContent = stats.totalMatches;
-        document.getElementById('activeSeasons').textContent = stats.activeSeasons;
         document.getElementById('totalRegionals').textContent = stats.totalRegionals;
 
     } catch (error) {
@@ -126,6 +211,12 @@ async function loadSeasons() {
 
     try {
         const response = await makeRequest('/api/seasons');
+
+        // Handle 404 - seasons endpoint not yet implemented
+        if (!response || !response.data) {
+            throw new Error('Seasons endpoint not available');
+        }
+
         const seasons = response.data;
 
         let html = '';
@@ -182,9 +273,10 @@ async function loadSeasons() {
     } catch (error) {
         console.error('Failed to load seasons:', error);
         document.getElementById('seasonsContent').innerHTML = `
-            <div class="alert alert-danger alert-custom">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                Failed to load seasons: ${error.message}
+            <div class="alert alert-warning alert-custom">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>Seasons feature coming soon!</strong><br>
+                The seasons database table hasn't been created yet. This feature will be available once the database is set up.
             </div>
         `;
     }
@@ -244,17 +336,18 @@ async function loadTeams() {
         }
 
         let html = `
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Team Number</th>
-                        <th>Team Name</th>
-                        <th>Regional</th>
-                        <th>Registered</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <div style="overflow-y: auto; overflow-x: hidden; width: 100%; box-sizing: border-box;">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Team Number</th>
+                            <th>Team Name</th>
+                            <th>Regional</th>
+                            <th>Registered</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
         `;
 
         teams.forEach(team => {
@@ -274,11 +367,13 @@ async function loadTeams() {
         });
 
         html += `
-                </tbody>
-            </table>
+                    </tbody>
+                </table>
+            </div>
         `;
 
         document.getElementById('teamsContent').innerHTML = html;
+        adjustTeamsListHeight();
 
     } catch (error) {
         console.error('Failed to load teams:', error);
@@ -584,49 +679,75 @@ document.addEventListener('DOMContentLoaded', () => {
 // Recent Activity
 async function loadRecentActivity() {
     try {
-        const response = await makeRequest('/api/dashboard/activity');
-        const activities = response.data;
+        const response = await makeRequest('/api/dashboard/activity?limit=30');
+        const logs = response.data;
 
-        if (activities.length === 0) {
+        if (!logs || logs.length === 0) {
             document.getElementById('recentActivity').innerHTML = `
-                <div class="text-center text-muted py-4">
-                    <i class="fas fa-history fa-2x mb-3"></i>
-                    <p>No recent activity found.</p>
-                    <small>Start by adding teams and matches!</small>
+                <div class="text-center text-muted py-4" style="height: auto;">
+                    <i class="fas fa-server fa-2x mb-2"></i>
+                    <p>No server activity yet</p>
                 </div>
             `;
             return;
         }
 
-        let html = '';
-        activities.forEach(activity => {
-            const timeAgo = getTimeAgo(new Date(activity.time));
+        let html = '<div style="font-family: monospace; font-size: 0.85rem; overflow-y: auto; overflow-x: hidden; width: 100%; box-sizing: border-box;">';
+
+        logs.forEach(log => {
+            const timestamp = new Date(log.timestamp).toLocaleTimeString();
+            const typeColors = {
+                'success': 'text-success',
+                'error': 'text-danger',
+                'warning': 'text-warning',
+                'info': 'text-info',
+                'request': 'text-secondary',
+                'supabase': 'text-primary',
+                'tba': 'text-warning'
+            };
+            const typeIcons = {
+                'success': 'fa-check-circle',
+                'error': 'fa-exclamation-circle',
+                'warning': 'fa-exclamation-triangle',
+                'info': 'fa-info-circle',
+                'request': 'fa-arrow-right',
+                'supabase': 'fa-database',
+                'tba': 'fa-cloud'
+            };
+
+            const colorClass = typeColors[log.type] || 'text-muted';
+            const iconClass = typeIcons[log.type] || 'fa-circle';
+
             html += `
-                <div class="d-flex align-items-center mb-3">
-                    <div class="flex-shrink-0">
-                        <div class="rounded-circle bg-${activity.color} bg-opacity-10 p-2">
-                            <i class="fas ${activity.icon} text-${activity.color}"></i>
-                        </div>
-                    </div>
-                    <div class="flex-grow-1 ms-3">
-                        <p class="mb-1">${activity.text}</p>
-                        <small class="text-muted">${timeAgo}</small>
+                <div class="mb-2 pb-2 border-bottom log-entry" style="line-height: 1.4;">
+                    <div class="d-flex align-items-start flex-wrap">
+                        <span class="text-muted me-2" style="min-width: 85px; flex-shrink: 0;">${timestamp}</span>
+                        <i class="fas ${iconClass} ${colorClass} me-2 mt-1" style="font-size: 0.75rem; flex-shrink: 0;"></i>
+                        <span class="${colorClass} me-2" style="min-width: 70px; font-weight: 600; flex-shrink: 0;">${log.type.toUpperCase()}</span>
+                        <span class="log-message" style="flex: 1; min-width: 0; word-wrap: break-word; overflow-wrap: break-word;">${escapeHtml(log.message)}</span>
                     </div>
                 </div>
             `;
         });
 
+        html += '</div>';
         document.getElementById('recentActivity').innerHTML = html;
 
     } catch (error) {
-        console.error('Failed to load recent activity:', error);
+        console.error('Failed to load server activity:', error);
         document.getElementById('recentActivity').innerHTML = `
             <div class="alert alert-warning alert-custom">
                 <i class="fas fa-exclamation-triangle me-2"></i>
-                Unable to load recent activity
+                Unable to load server activity
             </div>
         `;
     }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function getTimeAgo(date) {
@@ -642,8 +763,77 @@ function getTimeAgo(date) {
 // Load recent activity after initialization
 setTimeout(loadRecentActivity, 2000);
 
+// Auto-refresh server activity every 10 seconds
+setInterval(loadRecentActivity, 10000);
+
+// Function to adjust activity log height dynamically
+function adjustActivityLogHeight() {
+    const activityDiv = document.getElementById('recentActivity');
+    if (!activityDiv) return;
+
+    // Calculate available height (80% of viewport - space for header, stats, etc.)
+    const viewportHeight = window.innerHeight;
+    const targetHeight = Math.floor(viewportHeight * 0.8 - 350); // 80% minus header/stats/padding
+    const minHeight = 400; // Minimum height
+    const maxHeight = 1200; // Maximum height
+
+    const calculatedHeight = Math.max(minHeight, Math.min(maxHeight, targetHeight));
+
+    // Set height on the recentActivity div itself
+    activityDiv.style.height = calculatedHeight + 'px';
+    activityDiv.style.overflow = 'hidden';
+
+    // Also set on the inner div if it exists with slightly less height to account for any margins
+    const innerDiv = activityDiv.querySelector('div');
+    if (innerDiv && innerDiv.style) {
+        innerDiv.style.height = (calculatedHeight - 5) + 'px'; // Subtract a few pixels for padding
+        innerDiv.style.maxHeight = (calculatedHeight - 5) + 'px';
+    }
+}
+
+// Function to adjust teams list height dynamically
+function adjustTeamsListHeight() {
+    const teamsDiv = document.getElementById('teamsContent');
+    if (!teamsDiv) return;
+
+    // Calculate available height (80% of viewport - space for header, stats, etc.)
+    const viewportHeight = window.innerHeight;
+    const targetHeight = Math.floor(viewportHeight * 0.8 - 350); // 80% minus header/stats/padding
+    const minHeight = 400; // Minimum height
+    const maxHeight = 1200; // Maximum height
+
+    const calculatedHeight = Math.max(minHeight, Math.min(maxHeight, targetHeight));
+
+    // Set height on the teamsContent div itself
+    teamsDiv.style.height = calculatedHeight + 'px';
+    teamsDiv.style.overflow = 'hidden';
+
+    // Also set on the inner div if it exists with slightly less height to account for any margins
+    const innerDiv = teamsDiv.querySelector('div');
+    if (innerDiv && innerDiv.style) {
+        innerDiv.style.height = (calculatedHeight - 5) + 'px'; // Subtract a few pixels for padding
+        innerDiv.style.maxHeight = (calculatedHeight - 5) + 'px';
+    }
+}
+
+// Adjust height on window resize
+window.addEventListener('resize', adjustActivityLogHeight);
+window.addEventListener('resize', adjustTeamsListHeight);
+
+// Adjust height after activity loads
+const originalLoadActivity = loadRecentActivity;
+loadRecentActivity = async function() {
+    await originalLoadActivity();
+    setTimeout(adjustActivityLogHeight, 100);
+};
+
 // Add event listeners for TBA buttons after DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize dark mode
+    initDarkMode();
+
+    // Initial height adjustment
+    setTimeout(adjustActivityLogHeight, 500);
     // Wait a bit for the page to fully load
     setTimeout(function() {
         // Add event listener for Lookup Team Info button
@@ -815,6 +1005,9 @@ document.getElementById('tbaTeamForm').addEventListener('submit', async function
     }
 });
 
+// Full event import form handler
+document.getElementById('fullEventImportForm').addEventListener('submit', importFullEvent);
+
 // Load TBA 2025 events
 async function loadTBAEvents() {
     const button = document.getElementById('loadTBAEventsButton');
@@ -962,5 +1155,501 @@ async function importEventTeams() {
     } finally {
         button.innerHTML = originalText;
         button.disabled = false;
+    }
+}
+
+// ============================================================================
+// NEW TBA IMPORT FUNCTIONS
+// ============================================================================
+
+/**
+ * Show/hide TBA import sections based on selection
+ */
+function showTBASection(section) {
+    // Hide all sections
+    document.querySelectorAll('.tba-section').forEach(el => {
+        el.style.display = 'none';
+    });
+
+    // Show selected section
+    const sectionMap = {
+        'team': 'tba-team-section',
+        'matches': 'tba-matches-section',
+        'event': 'tba-event-section',
+        'full': 'tba-full-section'
+    };
+
+    const sectionId = sectionMap[section];
+    if (sectionId) {
+        document.getElementById(sectionId).style.display = 'block';
+    }
+
+    // If showing team section, load all team numbers
+    if (section === 'team') {
+        loadAllTeamNumbers();
+    }
+
+    // If showing matches section, set up event listeners
+    if (section === 'matches') {
+        setupMatchesSection();
+    }
+}
+
+/**
+ * Load all team numbers from TBA for the dropdown
+ */
+async function loadAllTeamNumbers() {
+    const select = document.getElementById('tbaTeamNumber');
+    const lookupButton = document.getElementById('lookupTBAButton');
+
+    // Check if already loaded
+    if (select.options.length > 1 && select.options[0].value !== '') {
+        select.disabled = false;
+        lookupButton.disabled = false;
+        return;
+    }
+
+    select.disabled = true;
+    select.innerHTML = '<option value="">Loading teams from TBA...</option>';
+    lookupButton.disabled = true;
+
+    try {
+        const response = await makeRequest('/api/tba/teams/all');
+
+        if (response.success) {
+            const teams = response.data;
+
+            // Populate dropdown
+            select.innerHTML = '<option value="">Select Team Number...</option>';
+            teams.forEach(teamNumber => {
+                const option = document.createElement('option');
+                option.value = teamNumber;
+                option.textContent = `Team ${teamNumber}`;
+                select.appendChild(option);
+            });
+
+            select.disabled = false;
+            lookupButton.disabled = false;
+
+            showToast('success', `Loaded ${teams.length} teams from TBA`);
+        } else {
+            select.innerHTML = '<option value="">Error loading teams</option>';
+            showToast('error', 'Failed to load teams: ' + response.error);
+        }
+
+    } catch (error) {
+        console.error('Failed to load team numbers:', error);
+        select.innerHTML = '<option value="">Error loading teams</option>';
+        showToast('error', 'Failed to load teams: ' + error.message);
+    }
+}
+
+/**
+ * Import full event data (teams + matches)
+ */
+async function importFullEvent(event) {
+    event.preventDefault();
+
+    const eventKey = document.getElementById('fullEventKey').value;
+    const regional = document.getElementById('fullEventRegional').value;
+
+    if (!eventKey || !regional) {
+        showToast('error', 'Please enter event key and regional name');
+        return;
+    }
+
+    const statusDiv = document.getElementById('fullEventStatus');
+    const detailsDiv = document.getElementById('fullEventStatusDetails');
+
+    statusDiv.style.display = 'block';
+    detailsDiv.innerHTML = '<p><i class="fas fa-spinner fa-spin me-2"></i>Starting import...</p>';
+
+    try {
+        const response = await makeRequest('/api/tba/admin/import-event-full', {
+            method: 'POST',
+            body: { eventKey, regional }
+        });
+
+        if (response.success) {
+            const summary = response.summary;
+            detailsDiv.innerHTML = `
+                <div class="alert alert-success alert-custom">
+                    <h6><i class="fas fa-check-circle me-2"></i>Import Complete!</h6>
+                    <p class="mb-1"><strong>Event:</strong> ${summary.eventKey}</p>
+                    <p class="mb-1"><strong>Teams Imported:</strong> ${summary.teams_imported}</p>
+                    <p class="mb-1"><strong>Matches Imported:</strong> ${summary.matches_imported}</p>
+                    ${summary.errors.length > 0 ? `<p class="mb-0"><strong>Errors:</strong> ${summary.errors.length}</p>` : ''}
+                </div>
+                ${response.note ? `<p class="text-muted small">${response.note}</p>` : ''}
+            `;
+
+            showToast('success', response.message);
+
+            // Refresh teams list if currently viewing
+            if (document.getElementById('teams-tab').classList.contains('active')) {
+                loadTeams();
+            }
+        } else {
+            detailsDiv.innerHTML = `
+                <div class="alert alert-danger alert-custom">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Import Failed:</strong> ${response.error}
+                </div>
+            `;
+            showToast('error', 'Import failed: ' + response.error);
+        }
+
+    } catch (error) {
+        console.error('Failed to import full event:', error);
+        detailsDiv.innerHTML = `
+            <div class="alert alert-danger alert-custom">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+        showToast('error', 'Failed to import event: ' + error.message);
+    }
+}
+
+// ============================================================================
+// TEAM MATCHES IMPORT FUNCTIONS
+// ============================================================================
+
+let currentMatchesData = null;
+
+/**
+ * Set up matches section event listeners
+ */
+function setupMatchesSection() {
+    const seasonSelect = document.getElementById('matchesSeasonSelect');
+    const teamSelect = document.getElementById('matchesTeamNumber');
+    const loadEventsBtn = document.getElementById('loadTeamEventsButton');
+
+    // Load teams when season is selected
+    seasonSelect.addEventListener('change', async () => {
+        if (seasonSelect.value) {
+            await loadTeamsForSeason(seasonSelect.value);
+        } else {
+            teamSelect.innerHTML = '<option value="">Select season first...</option>';
+            teamSelect.disabled = true;
+            loadEventsBtn.disabled = true;
+        }
+    });
+
+    // Automatically load events when team is selected
+    teamSelect.addEventListener('change', async () => {
+        if (teamSelect.value && seasonSelect.value) {
+            await loadTeamEventsForMatches();
+        } else {
+            loadEventsBtn.disabled = true;
+            document.getElementById('matchesEventSelect').disabled = true;
+            document.getElementById('matchesEventSelect').innerHTML = '<option value="">Select team first...</option>';
+        }
+    });
+
+    loadEventsBtn.addEventListener('click', loadTeamEventsForMatches);
+    document.getElementById('lookupMatchesButton').addEventListener('click', lookupTeamMatches);
+    document.getElementById('teamMatchesForm').addEventListener('submit', saveTeamMatches);
+}
+
+/**
+ * Load all teams that participated in a specific season
+ */
+async function loadTeamsForSeason(year) {
+    const teamSelect = document.getElementById('matchesTeamNumber');
+    const loadEventsBtn = document.getElementById('loadTeamEventsButton');
+
+    // Check if already loaded for this year
+    if (teamSelect.dataset.loadedYear === year && teamSelect.options.length > 1) {
+        teamSelect.disabled = false;
+        return;
+    }
+
+    teamSelect.disabled = true;
+    teamSelect.innerHTML = '<option value="">Loading teams...</option>';
+    loadEventsBtn.disabled = true;
+
+    try {
+        const response = await makeRequest(`/api/tba/teams/season/${year}`);
+
+        if (response.success) {
+            const teams = response.data;
+
+            teamSelect.innerHTML = '<option value="">Select Team Number...</option>';
+            teams.forEach(teamNumber => {
+                const option = document.createElement('option');
+                option.value = teamNumber;
+                option.textContent = `Team ${teamNumber}`;
+                teamSelect.appendChild(option);
+            });
+
+            teamSelect.disabled = false;
+            teamSelect.dataset.loadedYear = year;
+
+            showToast('success', `Loaded ${teams.length} teams for ${year} season`);
+        } else {
+            teamSelect.innerHTML = '<option value="">Error loading teams</option>';
+            showToast('error', 'Failed to load teams: ' + response.error);
+        }
+    } catch (error) {
+        console.error('Failed to load teams for season:', error);
+        teamSelect.innerHTML = '<option value="">Error loading teams</option>';
+        showToast('error', 'Failed to load teams: ' + error.message);
+    }
+}
+
+/**
+ * Load events for team in selected season
+ */
+async function loadTeamEventsForMatches() {
+    const season = document.getElementById('matchesSeasonSelect').value;
+    const teamNumber = document.getElementById('matchesTeamNumber').value;
+    const eventSelect = document.getElementById('matchesEventSelect');
+    const loadEventsBtn = document.getElementById('loadTeamEventsButton');
+
+    if (!season || !teamNumber) {
+        showToast('error', 'Please select season and enter team number');
+        return;
+    }
+
+    const originalText = loadEventsBtn.innerHTML;
+    loadEventsBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Loading...';
+    loadEventsBtn.disabled = true;
+
+    try {
+        const response = await makeRequest(`/api/tba/team/${teamNumber}/events/${season}`);
+
+        if (response.success && response.data) {
+            const events = response.data;
+
+            if (events.length === 0) {
+                eventSelect.innerHTML = '<option value="">No events found</option>';
+                showToast('warning', `No events found for team ${teamNumber} in ${season}`);
+                return;
+            }
+
+            // Populate events dropdown
+            eventSelect.innerHTML = '<option value="">Select Event...</option>';
+            events.forEach(event => {
+                const option = document.createElement('option');
+                option.value = event.event_key;
+                option.textContent = event.name;
+                option.dataset.eventName = event.name;
+                eventSelect.appendChild(option);
+            });
+
+            eventSelect.disabled = false;
+            document.getElementById('lookupMatchesButton').disabled = false;
+
+            showToast('success', `Found ${events.length} events for team ${teamNumber}`);
+        } else {
+            showToast('error', 'Failed to load events');
+        }
+
+    } catch (error) {
+        console.error('Failed to load events:', error);
+        showToast('error', 'Failed to load events: ' + error.message);
+        eventSelect.innerHTML = '<option value="">Error loading events</option>';
+    } finally {
+        loadEventsBtn.innerHTML = originalText;
+        loadEventsBtn.disabled = false;
+    }
+}
+
+/**
+ * Lookup team matches at selected event
+ */
+async function lookupTeamMatches() {
+    const teamNumber = document.getElementById('matchesTeamNumber').value;
+    const eventKey = document.getElementById('matchesEventSelect').value;
+    const lookupBtn = document.getElementById('lookupMatchesButton');
+    const infoDiv = document.getElementById('teamMatchesInfo');
+    const detailsDiv = document.getElementById('teamMatchesDetails');
+
+    if (!teamNumber || !eventKey) {
+        showToast('error', 'Please select all fields');
+        return;
+    }
+
+    const originalText = lookupBtn.innerHTML;
+    lookupBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Looking up...';
+    lookupBtn.disabled = true;
+
+    try {
+        const response = await makeRequest(`/api/tba/team/${teamNumber}/event/${eventKey}/matches`);
+
+        if (response.success) {
+            currentMatchesData = response.data;
+            const matches = response.data;
+
+            if (matches.length === 0) {
+                detailsDiv.innerHTML = '<p class="text-muted">No matches found for this team at this event.</p>';
+                infoDiv.style.display = 'block';
+                document.getElementById('saveMatchesButton').disabled = true;
+                return;
+            }
+
+            // Display match summary
+            let html = `<p><strong>Found ${matches.length} matches</strong></p><hr>`;
+
+            matches.forEach(match => {
+                const compLevelNames = { qm: 'Qualification', qf: 'Quarterfinal', sf: 'Semifinal', f: 'Final' };
+                const compLevel = compLevelNames[match.comp_level] || match.comp_level;
+
+                const isRed = match.alliances.red.team_keys.includes(`frc${teamNumber}`);
+                const alliance = isRed ? 'Red' : 'Blue';
+                const allianceClass = isRed ? 'text-danger' : 'text-primary';
+
+                const redScore = match.alliances.red.score;
+                const blueScore = match.alliances.blue.score;
+                const won = (isRed && redScore > blueScore) || (!isRed && blueScore > redScore);
+                const result = won ? '✓ Win' : '✗ Loss';
+                const resultClass = won ? 'text-success' : 'text-muted';
+
+                html += `
+                    <div class="mb-2 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <div><strong>${compLevel} ${match.match_number}</strong></div>
+                        <div>Alliance: <span class="${allianceClass}">${alliance}</span></div>
+                        <div>Score: <span class="text-danger">Red ${redScore}</span> - <span class="text-primary">Blue ${blueScore}</span></div>
+                        <div class="${resultClass}"><strong>${result}</strong></div>
+                    </div>
+                `;
+            });
+
+            detailsDiv.innerHTML = html;
+            infoDiv.style.display = 'block';
+            document.getElementById('saveMatchesButton').disabled = false;
+
+            showToast('success', `Found ${matches.length} matches`);
+        } else {
+            showToast('error', 'Failed to lookup matches');
+        }
+
+    } catch (error) {
+        console.error('Failed to lookup matches:', error);
+        showToast('error', 'Failed to lookup matches: ' + error.message);
+    } finally {
+        lookupBtn.innerHTML = originalText;
+        lookupBtn.disabled = false;
+    }
+}
+
+/**
+ * Save team matches to database
+ */
+async function saveTeamMatches(event) {
+    event.preventDefault();
+
+    if (!currentMatchesData || currentMatchesData.length === 0) {
+        showToast('error', 'No matches to save. Please lookup matches first.');
+        return;
+    }
+
+    const teamNumber = document.getElementById('matchesTeamNumber').value;
+    const eventKey = document.getElementById('matchesEventSelect').value;
+    const eventName = document.getElementById('matchesEventSelect').selectedOptions[0].dataset.eventName;
+
+    const saveBtn = document.getElementById('saveMatchesButton');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Saving...';
+    saveBtn.disabled = true;
+
+    try {
+        const response = await makeRequest(`/api/tba/team/${teamNumber}/event/${eventKey}/matches/save`, {
+            method: 'POST'
+        });
+
+        if (response.success) {
+            showToast('success', `Successfully saved ${response.saved} matches to database`);
+
+            // Reset the form and hide the results
+            document.getElementById('teamMatchesInfo').style.display = 'none';
+            currentMatchesData = null;
+            saveBtn.disabled = true;
+        } else {
+            showToast('error', 'Failed to save matches: ' + response.error);
+        }
+
+    } catch (error) {
+        console.error('Failed to save matches:', error);
+        showToast('error', 'Failed to save matches: ' + error.message);
+    } finally {
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+    }
+}
+
+/**
+ * Load Team 589 event history
+ */
+async function loadTeamHistory() {
+    const year = document.getElementById('historyYear').value;
+
+    if (!year) {
+        showToast('error', 'Please select a year');
+        return;
+    }
+
+    const resultsDiv = document.getElementById('teamHistoryResults');
+    const listDiv = document.getElementById('teamHistoryList');
+
+    resultsDiv.style.display = 'block';
+    listDiv.innerHTML = '<p><i class="fas fa-spinner fa-spin me-2"></i>Loading event history...</p>';
+
+    try {
+        const response = await makeRequest(`/api/tba/admin/589-history/${year}`);
+
+        if (response.success) {
+            const events = response.events;
+
+            if (events.length === 0) {
+                listDiv.innerHTML = '<p class="text-muted">No events found for this year.</p>';
+                return;
+            }
+
+            let html = '<div class="list-group">';
+            events.forEach(event => {
+                const statusBadge = event.has_data
+                    ? '<span class="badge bg-success">Data Imported</span>'
+                    : '<span class="badge bg-secondary">No Data</span>';
+
+                html += `
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">${event.event_name}</h6>
+                                <p class="mb-1 small text-muted">${event.city} | ${event.start_date}</p>
+                                <p class="mb-0 small"><strong>Event Key:</strong> ${event.event_key}</p>
+                                ${event.has_data ? `<p class="mb-0 small text-success">${event.match_count} matches</p>` : ''}
+                            </div>
+                            <div>
+                                ${statusBadge}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            html += `
+                <div class="mt-3">
+                    <p class="small text-muted">
+                        <strong>Summary:</strong> ${response.summary.total_events} total events,
+                        ${response.summary.events_with_data} with data,
+                        ${response.summary.events_to_import} to import
+                    </p>
+                </div>
+            `;
+
+            listDiv.innerHTML = html;
+        } else {
+            listDiv.innerHTML = `<div class="alert alert-danger alert-custom">${response.error}</div>`;
+            showToast('error', 'Failed to load history: ' + response.error);
+        }
+
+    } catch (error) {
+        console.error('Failed to load team history:', error);
+        listDiv.innerHTML = `<div class="alert alert-danger alert-custom">${error.message}</div>`;
+        showToast('error', 'Failed to load history: ' + error.message);
     }
 }

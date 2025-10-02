@@ -264,7 +264,7 @@ The project needs environment variables to connect to Supabase. These are stored
 
    B. Find this line:
    ```
-   API_KEYS=your_589_api_secret_key_here
+   589_API_KEY=your_589_api_secret_key_here
    ```
 
    Replace `your_589_api_secret_key_here` with the 589 API key from your email.

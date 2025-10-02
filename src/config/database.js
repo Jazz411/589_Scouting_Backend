@@ -15,7 +15,7 @@ if (!supabaseUrl || !supabaseSecretKey) {
 
 // Create Supabase client with secret key for backend operations
 // Secret keys provide elevated privileges and bypass Row Level Security
-const supabase = createClient(supabaseUrl, supabaseSecretKey, {
+const supabaseClient = createClient(supabaseUrl, supabaseSecretKey, {
     auth: {
         autoRefreshToken: false,
         persistSession: false
@@ -24,6 +24,44 @@ const supabase = createClient(supabaseUrl, supabaseSecretKey, {
         headers: {
             'User-Agent': '589-FRC-Scouting-Backend/1.0.0'
         }
+    }
+});
+
+// Logging function reference (will be set by dashboard module)
+let dashboardLogger = null;
+
+function setLogger(loggerFn) {
+    dashboardLogger = loggerFn;
+}
+
+// Proxy handler to log Supabase queries
+const supabase = new Proxy(supabaseClient, {
+    get(target, prop) {
+        if (prop === 'from') {
+            return function(tableName) {
+                const table = target.from(tableName);
+
+                // Log the query when it's executed
+                const originalMethods = {};
+                ['select', 'insert', 'update', 'delete', 'upsert'].forEach(method => {
+                    if (typeof table[method] === 'function') {
+                        const original = table[method].bind(table);
+                        originalMethods[method] = original;
+
+                        table[method] = function(...args) {
+                            if (dashboardLogger) {
+                                const operation = method.toUpperCase();
+                                dashboardLogger('supabase', `${operation} from ${tableName}`);
+                            }
+                            return original(...args);
+                        };
+                    }
+                });
+
+                return table;
+            };
+        }
+        return target[prop];
     }
 });
 
@@ -49,5 +87,6 @@ async function testConnection() {
 
 module.exports = {
     supabase,
-    testConnection
+    testConnection,
+    setLogger
 };

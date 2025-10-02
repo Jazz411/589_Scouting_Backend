@@ -5,10 +5,41 @@
 
 const express = require('express');
 const path = require('path');
-const { supabase } = require('../config/database');
+const { supabase, setLogger: setDatabaseLogger } = require('../config/database');
 const { asyncHandler } = require('../middleware/errorHandling');
 
 const router = express.Router();
+
+// In-memory server activity log (last 100 entries)
+const serverLogs = [];
+const MAX_LOGS = 100;
+
+// Helper function to add log entry
+function addLog(type, message, details = {}) {
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        type, // 'info', 'success', 'warning', 'error', 'request', 'supabase', 'tba'
+        message,
+        details,
+        id: Date.now() + Math.random()
+    };
+
+    serverLogs.unshift(logEntry); // Add to beginning
+    if (serverLogs.length > MAX_LOGS) {
+        serverLogs.pop(); // Remove oldest
+    }
+
+    return logEntry;
+}
+
+// Export addLog for use in other modules
+router.addLog = addLog;
+
+// Set up logger for database module
+setDatabaseLogger(addLog);
+
+// Initialize with startup log
+addLog('success', 'Dashboard module initialized');
 
 // Dashboard home page (served from static files)
 router.get('/', (req, res) => {
@@ -54,72 +85,45 @@ router.get('/stats', asyncHandler(async (req, res) => {
     }
 }));
 
-// Get recent activity
+// Get server activity logs
 router.get('/activity', asyncHandler(async (req, res) => {
-    try {
-        // Get recent matches
-        const { data: recentMatches } = await supabase
-            .from('matches')
-            .select(`
-                *,
-                teams (
-                    team_number,
-                    team_name
-                )
-            `)
-            .order('created_at', { ascending: false })
-            .limit(5);
+    const limit = parseInt(req.query.limit) || 50;
 
-        // Get recent teams
-        const { data: recentTeams } = await supabase
-            .from('teams')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(3);
+    res.json({
+        success: true,
+        data: serverLogs.slice(0, limit)
+    });
+}));
 
-        const activities = [];
+// Get API key for dashboard write operations
+router.get('/api-key', asyncHandler(async (req, res) => {
+    // Only provide API key if request is from localhost
+    const isLocal = req.ip === '::1' || req.ip === '127.0.0.1' || req.ip === '::ffff:127.0.0.1';
 
-        // Add recent matches
-        if (recentMatches) {
-            recentMatches.forEach(match => {
-                activities.push({
-                    type: 'match',
-                    text: `Team ${match.teams?.team_number || 'Unknown'} completed Match ${match.match_number}`,
-                    time: new Date(match.created_at).toLocaleString(),
-                    icon: 'fa-trophy',
-                    color: 'success'
-                });
-            });
-        }
-
-        // Add recent teams
-        if (recentTeams) {
-            recentTeams.forEach(team => {
-                activities.push({
-                    type: 'team',
-                    text: `Team ${team.team_number} registered for ${team.regional}`,
-                    time: new Date(team.created_at).toLocaleString(),
-                    icon: 'fa-user-plus',
-                    color: 'primary'
-                });
-            });
-        }
-
-        // Sort by creation time
-        activities.sort((a, b) => new Date(b.time) - new Date(a.time));
-
-        res.json({
-            success: true,
-            data: activities.slice(0, 10)
-        });
-
-    } catch (error) {
-        console.error('Error getting recent activity:', error);
-        res.json({
-            success: true,
-            data: []
+    if (!isLocal) {
+        return res.status(403).json({
+            success: false,
+            error: 'API key only available from localhost'
         });
     }
+
+    res.json({
+        success: true,
+        data: {
+            apiKey: process.env['589_API_KEY'] || 'not-configured'
+        }
+    });
 }));
+
+// Middleware to log all requests to this router
+router.use((req, res, next) => {
+    const logMessage = `${req.method} ${req.originalUrl}`;
+    addLog('request', logMessage, {
+        method: req.method,
+        path: req.originalUrl,
+        ip: req.ip
+    });
+    next();
+});
 
 module.exports = router;

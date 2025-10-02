@@ -21,7 +21,14 @@ const router = express.Router();
 
 // TBA API configuration
 const TBA_BASE_URL = 'https://www.thebluealliance.com/api/v3';
-const TBA_AUTH_KEY = process.env.TBA_AUTH_KEY; // User needs to set this
+const TBA_AUTH_KEY = process.env.TBA_API_KEY || process.env.TBA_AUTH_KEY; // Support both variable names
+
+// Logging function reference (will be set by dashboard module)
+let dashboardLogger = null;
+
+router.setLogger = function(loggerFn) {
+    dashboardLogger = loggerFn;
+};
 
 /**
  * Helper function to fetch data from The Blue Alliance API
@@ -29,6 +36,11 @@ const TBA_AUTH_KEY = process.env.TBA_AUTH_KEY; // User needs to set this
 async function fetchFromTBA(endpoint) {
     if (!TBA_AUTH_KEY) {
         throw new Error('TBA_AUTH_KEY not configured. Please set your The Blue Alliance API key in environment variables.');
+    }
+
+    // Log the TBA API call
+    if (dashboardLogger) {
+        dashboardLogger('tba', `GET ${endpoint}`);
     }
 
     const response = await fetch(`${TBA_BASE_URL}${endpoint}`, {
@@ -44,6 +56,34 @@ async function fetchFromTBA(endpoint) {
 
     return response.json();
 }
+
+/**
+ * GET /api/tba/status
+ * Check if TBA API is available and responding
+ */
+router.get('/status', async (req, res) => {
+    try {
+        if (!TBA_AUTH_KEY) {
+            return res.json({
+                success: false,
+                message: 'TBA API key not configured'
+            });
+        }
+
+        // Make a simple request to check TBA API status
+        await fetchFromTBA('/status');
+
+        res.json({
+            success: true,
+            message: 'TBA API is responding'
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
 
 /**
  * GET /api/tba/team/:teamNumber
@@ -246,14 +286,248 @@ router.post('/event/:eventKey/import-teams', async (req, res) => {
 });
 
 /**
- * GET /api/tba/team/frc589/events/:year
- * Get all events Team 589 participated in for a specific year
- * Admin helper endpoint for finding relevant regionals
+ * GET /api/tba/teams/all
+ * Get all FRC team numbers (simplified list for dropdown)
+ * Returns team numbers in ascending order
  */
-router.get('/team/frc589/events/:year', async (req, res) => {
+router.get('/teams/all', async (req, res) => {
+    try {
+        const allTeams = [];
+        let page = 0;
+        let hasMore = true;
+
+        // TBA returns teams in pages of ~500 teams
+        // Fetch all pages (there are about 8000+ teams total)
+        while (hasMore && page < 20) { // Limit to 20 pages (10,000 teams) for safety
+            const teams = await fetchFromTBA(`/teams/${page}`);
+
+            if (teams && teams.length > 0) {
+                // Extract just the team numbers
+                const teamNumbers = teams.map(team => team.team_number);
+                allTeams.push(...teamNumbers);
+                page++;
+            } else {
+                hasMore = false;
+            }
+        }
+
+        // Sort in ascending order (lowest team numbers first)
+        allTeams.sort((a, b) => a - b);
+
+        res.json({
+            success: true,
+            data: allTeams,
+            count: allTeams.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching all teams:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/tba/teams/season/:year
+ * Get all FRC team numbers that participated in a specific season
+ * Returns team numbers in ascending order
+ */
+router.get('/teams/season/:year', async (req, res) => {
     try {
         const { year } = req.params;
-        const events = await fetchFromTBA(`/team/frc589/events/${year}`);
+        const allTeams = [];
+        let page = 0;
+        let hasMore = true;
+
+        // TBA returns teams in pages of ~500 teams per year
+        while (hasMore && page < 20) {
+            const teams = await fetchFromTBA(`/teams/${year}/${page}`);
+
+            if (teams && teams.length > 0) {
+                // Extract just the team numbers
+                const teamNumbers = teams.map(team => team.team_number);
+                allTeams.push(...teamNumbers);
+                page++;
+            } else {
+                hasMore = false;
+            }
+        }
+
+        // Sort in ascending order (lowest team numbers first)
+        allTeams.sort((a, b) => a - b);
+
+        res.json({
+            success: true,
+            data: allTeams,
+            count: allTeams.length,
+            year: parseInt(year)
+        });
+
+    } catch (error) {
+        console.error('Error fetching teams for season:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/tba/team/:teamNumber/event/:eventKey/matches
+ * Get all matches for a specific team at a specific event
+ */
+router.get('/team/:teamNumber/event/:eventKey/matches', async (req, res) => {
+    try {
+        const { teamNumber, eventKey } = req.params;
+        const teamKey = `frc${teamNumber}`;
+
+        // Fetch all matches at the event
+        const eventMatches = await fetchFromTBA(`/event/${eventKey}/matches`);
+
+        // Filter matches that include this team
+        const teamMatches = eventMatches.filter(match => {
+            const redTeams = match.alliances?.red?.team_keys || [];
+            const blueTeams = match.alliances?.blue?.team_keys || [];
+            return [...redTeams, ...blueTeams].includes(teamKey);
+        });
+
+        // Sort by match order
+        teamMatches.sort((a, b) => {
+            const order = { qm: 1, qf: 2, sf: 3, f: 4 };
+            if (a.comp_level !== b.comp_level) {
+                return order[a.comp_level] - order[b.comp_level];
+            }
+            return a.match_number - b.match_number;
+        });
+
+        res.json({
+            success: true,
+            data: teamMatches,
+            count: teamMatches.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching team matches:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/tba/team/:teamNumber/event/:eventKey/matches/save
+ * Save team match data to tba_matches table
+ */
+router.post('/team/:teamNumber/event/:eventKey/matches/save', async (req, res) => {
+    try {
+        const { teamNumber, eventKey } = req.params;
+        const teamKey = `frc${teamNumber}`;
+
+        // First, fetch and save the event data to satisfy foreign key constraint
+        const eventData = await fetchFromTBA(`/event/${eventKey}`);
+
+        const eventRecord = {
+            event_key: eventData.key,
+            name: eventData.name,
+            event_code: eventData.event_code,
+            event_type: eventData.event_type,
+            event_type_string: eventData.event_type_string,
+            year: eventData.year,
+            start_date: eventData.start_date,
+            end_date: eventData.end_date,
+            city: eventData.city,
+            state_prov: eventData.state_prov,
+            country: eventData.country
+        };
+
+        // Upsert event (create or update if exists)
+        const { error: eventError } = await supabase
+            .from('events')
+            .upsert(eventRecord, {
+                onConflict: 'event_key',
+                ignoreDuplicates: false
+            });
+
+        if (eventError) {
+            console.error('Error saving event:', eventError);
+            throw new Error(`Failed to save event: ${eventError.message}`);
+        }
+
+        // Fetch all matches at the event
+        const eventMatches = await fetchFromTBA(`/event/${eventKey}/matches`);
+
+        // Filter matches that include this team
+        const teamMatches = eventMatches.filter(match => {
+            const redTeams = match.alliances?.red?.team_keys || [];
+            const blueTeams = match.alliances?.blue?.team_keys || [];
+            return [...redTeams, ...blueTeams].includes(teamKey);
+        });
+
+        if (teamMatches.length === 0) {
+            return res.json({
+                success: true,
+                message: 'No matches found to save',
+                saved: 0
+            });
+        }
+
+        // Transform matches to database format
+        const matchRecords = teamMatches.map(match => ({
+            match_key: match.key,
+            event_key: eventKey,
+            comp_level: match.comp_level,
+            set_number: match.set_number,
+            match_number: match.match_number,
+            alliances: match.alliances,
+            winning_alliance: match.winning_alliance,
+            score_breakdown: match.score_breakdown,
+            videos: match.videos || [],
+            predicted_time: match.predicted_time,
+            actual_time: match.actual_time,
+            post_result_time: match.post_result_time
+        }));
+
+        // Bulk upsert into Supabase tba_matches table
+        const { data, error } = await supabase
+            .from('tba_matches')
+            .upsert(matchRecords, {
+                onConflict: 'match_key',
+                ignoreDuplicates: false
+            })
+            .select();
+
+        if (error) {
+            throw error;
+        }
+
+        res.json({
+            success: true,
+            message: `Successfully saved ${data.length} matches for team ${teamNumber} at ${eventKey}`,
+            saved: data.length,
+            data: data
+        });
+
+    } catch (error) {
+        console.error('Error saving team matches:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/tba/team/:teamNumber/events/:year
+ * Get all events a team participated in for a specific year
+ */
+router.get('/team/:teamNumber/events/:year', async (req, res) => {
+    try {
+        const { teamNumber, year } = req.params;
+        const teamKey = `frc${teamNumber}`;
+        const events = await fetchFromTBA(`/team/${teamKey}/events/${year}`);
 
         // Enrich with event details
         const enrichedEvents = events.map(event => ({

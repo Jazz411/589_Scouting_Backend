@@ -29,10 +29,20 @@ const validateApiKey = (req, res, next) => {
         });
     }
 
-    // Validate API key
-    const validApiKeys = process.env.API_KEYS?.split(',') || [];
+    // Validate against 589_API_KEY from environment
+    const validApiKey = process.env['589_API_KEY'];
 
-    if (!validApiKeys.includes(apiKey)) {
+    if (!validApiKey) {
+        console.error('⚠️  589_API_KEY not configured in .env file');
+        return res.status(500).json({
+            success: false,
+            error: {
+                message: 'Server configuration error: API key not configured'
+            }
+        });
+    }
+
+    if (apiKey !== validApiKey) {
         return res.status(401).json({
             success: false,
             error: {
@@ -42,6 +52,73 @@ const validateApiKey = (req, res, next) => {
     }
 
     // API key is valid, continue to next middleware
+    next();
+};
+
+/**
+ * Optional API key validation - for endpoints that should work with or without auth
+ * This allows public read access while still accepting API keys for rate limiting/tracking
+ */
+const optionalApiKey = (req, res, next) => {
+    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+
+    if (apiKey) {
+        const validApiKey = process.env['589_API_KEY'];
+        if (apiKey === validApiKey) {
+            req.authenticated = true;
+        } else {
+            req.authenticated = false;
+        }
+    } else {
+        req.authenticated = false;
+    }
+
+    next();
+};
+
+/**
+ * Validate API key for write operations only
+ * GET requests are allowed without authentication for read-only access
+ */
+const validateApiKeyForWrites = (req, res, next) => {
+    // Allow GET requests without authentication (read-only)
+    if (req.method === 'GET') {
+        return next();
+    }
+
+    // For POST, PUT, DELETE, PATCH - require API key
+    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+
+    if (!apiKey) {
+        return res.status(401).json({
+            success: false,
+            error: {
+                message: 'API key required for write operations. Include x-api-key header or Authorization: Bearer <key>'
+            }
+        });
+    }
+
+    const validApiKey = process.env['589_API_KEY'];
+
+    if (!validApiKey) {
+        console.error('⚠️  589_API_KEY not configured in .env file');
+        return res.status(500).json({
+            success: false,
+            error: {
+                message: 'Server configuration error: API key not configured'
+            }
+        });
+    }
+
+    if (apiKey !== validApiKey) {
+        return res.status(401).json({
+            success: false,
+            error: {
+                message: 'Invalid API key'
+            }
+        });
+    }
+
     next();
 };
 
@@ -76,5 +153,7 @@ const requireRole = (role) => {
 
 module.exports = {
     validateApiKey,
+    validateApiKeyForWrites,
+    optionalApiKey,
     requireRole
 };
